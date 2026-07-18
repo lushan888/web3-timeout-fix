@@ -65,25 +65,63 @@ export default class HttpProvider<
 		payload: Web3APIPayload<API, Method>,
 		requestOptions?: RequestInit,
 	): Promise<JsonRpcResponseWithResult<ResultType>> {
+		// Handle timeout via AbortController
+		let abortController: AbortController | undefined;
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const timeoutMs = this.httpProviderOptions?.timeout;
+
+		if (timeoutMs !== undefined) {
+			abortController = new AbortController();
+			if (timeoutMs === 0) {
+				abortController.abort();
+			} else {
+				timeoutId = setTimeout(() => {
+					abortController!.abort();
+				}, timeoutMs);
+			}
+		}
+
 		const providerOptionsCombined = {
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
+			...(abortController ? { signal: abortController.signal } : {}),
 		};
-		const response = await fetch(this.clientUrl, {
-			...providerOptionsCombined,
-			method: 'POST',
-			headers: {
-				...providerOptionsCombined.headers,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
-		if (!response.ok) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-			throw new ResponseError(await response.json(), undefined, undefined, response.status);
-		}
 
-		return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		try {
+			const response = await fetch(this.clientUrl, {
+				...providerOptionsCombined,
+				method: 'POST',
+				headers: {
+					...providerOptionsCombined.headers,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(payload),
+			});
+
+			if (timeoutId) clearTimeout(timeoutId);
+
+			if (!response.ok) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+				throw new ResponseError(await response.json(), undefined, undefined, response.status);
+			}
+
+			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		} catch (error) {
+			if (timeoutId) clearTimeout(timeoutId);
+
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			if (abortController?.signal.aborted) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError') {
+					if (timeoutMs === 0) {
+						throw new Error('Request aborted due to timeout (timeout was set to 0ms)');
+					}
+					throw new Error(`Request aborted due to timeout (timeout was set to ${timeoutMs}ms)`);
+				}
+			}
+
+			throw error;
+		}
 	}
 
 	/* eslint-disable class-methods-use-this */
