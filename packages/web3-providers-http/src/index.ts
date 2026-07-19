@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -75,7 +75,7 @@ export default class HttpProvider<
 		let timeoutId: ReturnType<typeof setTimeout> | undefined;
 		const timeout = this.httpProviderOptions?.timeout;
 
-		if (timeout && timeout > 0) {
+		if (timeout !== undefined && timeout > 0) {
 			abortController = new AbortController();
 			timeoutId = setTimeout(() => {
 				abortController?.abort();
