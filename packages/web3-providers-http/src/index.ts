@@ -75,7 +75,7 @@ export default class HttpProvider<
 		let timeoutId: ReturnType<typeof setTimeout> | undefined;
 		const timeout = this.httpProviderOptions?.timeout;
 
-		if (timeout !== undefined && timeout > 0) {
+		if (timeout !== undefined && timeout >= 0) {
 			abortController = new AbortController();
 			timeoutId = setTimeout(() => {
 				abortController?.abort();
@@ -100,7 +100,13 @@ export default class HttpProvider<
 
 			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
 		} catch (error: unknown) {
-			if (error instanceof DOMException && error.name === 'AbortError') {
+			// Cross-platform AbortError check (DOMException for browsers, Error for Node/cross-fetch)
+			const isAborted =
+				(error instanceof DOMException && error.name === 'AbortError') ||
+				(error instanceof Error && error.name === 'AbortError') ||
+				(abortController !== undefined && abortController.signal.aborted &&
+					!(error instanceof ResponseError));
+			if (isAborted) {
 				throw new Error(`HTTP request timed out after ${timeout}ms`);
 			}
 			throw error;
