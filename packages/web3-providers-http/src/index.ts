@@ -69,21 +69,46 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
-			...providerOptionsCombined,
-			method: 'POST',
-			headers: {
-				...providerOptionsCombined.headers,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
-		if (!response.ok) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-			throw new ResponseError(await response.json(), undefined, undefined, response.status);
+
+		// Handle timeout via AbortController
+		let abortController: AbortController | undefined;
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+		const timeout = this.httpProviderOptions?.timeout;
+
+		if (timeout && timeout > 0) {
+			abortController = new AbortController();
+			timeoutId = setTimeout(() => {
+				abortController?.abort();
+			}, timeout);
 		}
 
-		return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		try {
+			const response = await fetch(this.clientUrl, {
+				...providerOptionsCombined,
+				signal: abortController?.signal ?? providerOptionsCombined.signal,
+				method: 'POST',
+				headers: {
+					...providerOptionsCombined.headers,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(payload),
+			});
+			if (!response.ok) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+				throw new ResponseError(await response.json(), undefined, undefined, response.status);
+			}
+
+			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		} catch (error: unknown) {
+			if (error instanceof DOMException && error.name === 'AbortError') {
+				throw new Error(`HTTP request timed out after ${timeout}ms`);
+			}
+			throw error;
+		} finally {
+			if (timeoutId) {
+				clearTimeout(timeoutId);
+			}
+		}
 	}
 
 	/* eslint-disable class-methods-use-this */
