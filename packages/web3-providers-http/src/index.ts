@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -27,6 +27,7 @@ import {
 	Web3ProviderStatus,
 } from 'web3-types';
 import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'web3-errors';
+import { ConnectionTimeoutError } from 'web3-errors';
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
@@ -69,15 +70,36 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
-			...providerOptionsCombined,
-			method: 'POST',
-			headers: {
-				...providerOptionsCombined.headers,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
+
+		// Handle timeout via AbortSignal
+		const configuredTimeout = this.httpProviderOptions?.timeout;
+		let timeoutSignal: AbortSignal | undefined;
+		if (configuredTimeout !== undefined && configuredTimeout > 0) {
+			if (!providerOptionsCombined.signal) {
+				timeoutSignal = AbortSignal.timeout(configuredTimeout);
+				providerOptionsCombined.signal = timeoutSignal;
+			}
+		}
+
+		let response: Response;
+		try {
+			response = await fetch(this.clientUrl, {
+				...providerOptionsCombined,
+				method: 'POST',
+				headers: {
+					...providerOptionsCombined.headers,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(payload),
+			});
+		} catch (err: any) {
+			if (timeoutSignal && (err.name === 'TimeoutError' || err.name === 'AbortError')) {
+				throw new ConnectionTimeoutError(
+					configuredTimeout ?? 0,
+				);
+			}
+			throw err;
+		}
 		if (!response.ok) {
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 			throw new ResponseError(await response.json(), undefined, undefined, response.status);
