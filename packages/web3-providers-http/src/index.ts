@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -6,13 +6,13 @@ it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-web3.js is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
+web3.js is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with web3.js.  If not, see <http://www.gnu.org/licenses/>.
+along with this program; if not, see <http://www.gnu.org/licenses/>.
 */
 
 import fetch from 'cross-fetch';
@@ -69,7 +69,8 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
+
+		const fetchOptions: RequestInit = {
 			...providerOptionsCombined,
 			method: 'POST',
 			headers: {
@@ -77,7 +78,29 @@ export default class HttpProvider<
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(payload),
-		});
+		};
+
+		const timeout = this.httpProviderOptions?.timeout ?? 0;
+		if (timeout > 0) {
+			fetchOptions.signal = AbortSignal.timeout(timeout);
+		}
+
+		let response;
+		try {
+			response = await fetch(this.clientUrl, fetchOptions);
+		} catch (error) {
+			if (error instanceof Error && error.name === 'TimeoutError') {
+				throw new ResponseError(
+					{
+						code: -32000,
+						message: `failed after 0 retries: timeout`,
+					},
+					error,
+				);
+			}
+			throw error;
+		}
+
 		if (!response.ok) {
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 			throw new ResponseError(await response.json(), undefined, undefined, response.status);
