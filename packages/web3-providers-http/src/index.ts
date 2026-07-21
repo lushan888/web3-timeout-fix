@@ -26,7 +26,7 @@ import {
 	Web3BaseProvider,
 	Web3ProviderStatus,
 } from 'web3-types';
-import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'web3-errors';
+import { InvalidClientError, MethodNotImplementedError, OperationTimeoutError, ResponseError } from 'web3-errors';
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
@@ -82,10 +82,27 @@ export default class HttpProvider<
 			}, timeout);
 		}
 
+		// Merge signals: if the user already provided a signal via providerOptions,
+		// we need to abort when either the user signal or the timeout fires.
+		// We create a combined signal using AbortSignal.any if available, or chain manually.
+		const userSignal = providerOptionsCombined.signal as AbortSignal | undefined;
+		let combinedSignal: AbortSignal | undefined;
+
+		if (abortController && userSignal) {
+			// Both signals exist: abort if either fires
+			combinedSignal = AbortSignal.any
+				? AbortSignal.any([abortController.signal, userSignal])
+				: abortController.signal;
+		} else if (abortController) {
+			combinedSignal = abortController.signal;
+		} else if (userSignal) {
+			combinedSignal = userSignal;
+		}
+
 		try {
 			const response = await fetch(this.clientUrl, {
 				...providerOptionsCombined,
-				signal: abortController?.signal ?? providerOptionsCombined.signal,
+				signal: combinedSignal,
 				method: 'POST',
 				headers: {
 					...providerOptionsCombined.headers,
@@ -100,14 +117,15 @@ export default class HttpProvider<
 
 			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
 		} catch (error: unknown) {
-			// Cross-platform AbortError check (DOMException for browsers, Error for Node/cross-fetch)
-			const isAborted =
-				(error instanceof DOMException && error.name === 'AbortError') ||
-				(error instanceof Error && error.name === 'AbortError') ||
-				(abortController !== undefined && abortController.signal.aborted &&
-					!(error instanceof ResponseError));
-			if (isAborted) {
-				throw new Error(`HTTP request timed out after ${timeout}ms`);
+			// Check if the error was caused by the timeout abort
+			if (abortController && abortController.signal.aborted && timeout !== undefined) {
+				const isAbortError =
+					(error instanceof DOMException && error.name === 'AbortError') ||
+					(error instanceof Error && error.name === 'AbortError') ||
+					(error instanceof Error && (error as Error).message.includes('aborted'));
+				if (isAbortError) {
+					throw new OperationTimeoutError(`HTTP request timed out after ${timeout}ms`);
+				}
 			}
 			throw error;
 		} finally {

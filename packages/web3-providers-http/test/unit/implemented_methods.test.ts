@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@ jest.setMock('cross-fetch', fetchMock);
 /* eslint-disable-next-line import/first */
 import { Web3APIPayload, EthExecutionAPI } from 'web3-types';
 /* eslint-disable-next-line import/first */
-import { ResponseError } from 'web3-errors';
+import { OperationTimeoutError, ResponseError } from 'web3-errors';
 /* eslint-disable-next-line import/first */
 import HttpProvider from '../../src/index';
 /* eslint-disable-next-line import/first */
@@ -62,6 +62,52 @@ describe('HttpProvider - implemented methods', () => {
 			fetchMock.mockResponseOnce(JSON.stringify(mockGetBalanceResponse), { status: 400 });
 
 			await expect(httpProvider.request(jsonRpcPayload)).rejects.toThrow(ResponseError);
+		});
+	});
+
+	describe('httpProvider.request with timeout', () => {
+		it('should throw OperationTimeoutError when timeout is exceeded', async () => {
+			// Simulate a request that never completes (hangs indefinitely)
+			fetchMock.mockResponseOnce(() => new Promise(() => { /* never resolves */ }));
+
+			const providerWithTimeout = new HttpProvider('http://localhost:8545', {
+				providerOptions: {},
+				timeout: 50,
+			});
+
+			await expect(
+				providerWithTimeout.request(jsonRpcPayload),
+			).rejects.toThrow(OperationTimeoutError);
+		});
+
+		it('should complete successfully when response is within timeout', async () => {
+			fetchMock.mockResponseOnce(
+				() => new Promise(resolve => {
+					setTimeout(() => {
+						resolve(JSON.stringify(mockGetBalanceResponse));
+					}, 10);
+				}),
+			);
+
+			const providerWithTimeout = new HttpProvider('http://localhost:8545', {
+				providerOptions: {},
+				timeout: 5000,
+			});
+
+			const result = await providerWithTimeout.request(jsonRpcPayload);
+			expect(result).toStrictEqual(mockGetBalanceResponse);
+		});
+
+		it('should not throw timeout when timeout is 0 (disabled)', async () => {
+			fetchMock.mockResponseOnce(JSON.stringify(mockGetBalanceResponse));
+
+			const providerWithTimeout = new HttpProvider('http://localhost:8545', {
+				providerOptions: {},
+				timeout: 0,
+			});
+
+			const result = await providerWithTimeout.request(jsonRpcPayload);
+			expect(result).toStrictEqual(mockGetBalanceResponse);
 		});
 	});
 });
