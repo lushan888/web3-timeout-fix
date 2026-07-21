@@ -83,6 +83,9 @@ export default class HttpProvider<
 		const timeout = this.httpProviderOptions?.timeout ?? 0;
 		if (timeout > 0) {
 			fetchOptions.signal = AbortSignal.timeout(timeout);
+		} else if (timeout === 0 && this.httpProviderOptions?.timeout !== undefined) {
+			// timeout: 0 means immediate rejection — use an already-aborted signal
+			fetchOptions.signal = AbortSignal.abort();
 		}
 
 		let response;
