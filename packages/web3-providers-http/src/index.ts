@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -26,7 +26,7 @@ import {
 	Web3BaseProvider,
 	Web3ProviderStatus,
 } from 'web3-types';
-import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'web3-errors';
+import { InvalidClientError, MethodNotImplementedError, ResponseError, ConnectionTimeoutError } from 'web3-errors';
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
@@ -69,6 +69,39 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
+
+		const timeout = this.httpProviderOptions?.timeout;
+
+		if (timeout !== undefined && timeout > 0) {
+			const abortController = new AbortController();
+			providerOptionsCombined.signal = abortController.signal;
+
+			const response = await Promise.race([
+				fetch(this.clientUrl, {
+					...providerOptionsCombined,
+					method: 'POST',
+					headers: {
+						...providerOptionsCombined.headers,
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify(payload),
+				}),
+				new Promise<never>((_, reject) => {
+					setTimeout(() => {
+						abortController.abort();
+						reject(new ConnectionTimeoutError(timeout));
+					}, timeout);
+				}),
+			]);
+
+			if (!response.ok) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+				throw new ResponseError(await response.json(), undefined, undefined, response.status);
+			}
+
+			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		}
+
 		const response = await fetch(this.clientUrl, {
 			...providerOptionsCombined,
 			method: 'POST',
