@@ -72,7 +72,7 @@ export default class HttpProvider<
 
 		const timeout = this.httpProviderOptions?.timeout;
 
-		if (timeout !== undefined && timeout > 0) {
+		if (timeout !== undefined && timeout >= 0) {
 			const abortController = new AbortController();
 			providerOptionsCombined.signal = abortController.signal;
 
