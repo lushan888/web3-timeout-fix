@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -26,7 +26,7 @@ import {
 	Web3BaseProvider,
 	Web3ProviderStatus,
 } from 'web3-types';
-import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'web3-errors';
+import { InvalidClientError, MethodNotImplementedError, OperationTimeoutError, ResponseError } from 'web3-errors';
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
@@ -69,21 +69,65 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
-			...providerOptionsCombined,
-			method: 'POST',
-			headers: {
-				...providerOptionsCombined.headers,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
-		if (!response.ok) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-			throw new ResponseError(await response.json(), undefined, undefined, response.status);
+
+		// Read timeout from the top-level httpProviderOptions
+		const timeoutMs = this.httpProviderOptions?.timeout;
+
+		let abortController: AbortController | undefined;
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+		if (timeoutMs !== undefined && timeoutMs > 0) {
+			abortController = new AbortController();
+			timeoutId = setTimeout(() => {
+				abortController?.abort();
+			}, timeoutMs);
 		}
 
-		return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		// Build fetch options, merging any existing user signal with our timeout signal
+		let fetchSignal: AbortSignal | undefined;
+		if (abortController && providerOptionsCombined.signal) {
+			// Both timeout and user-provided signal exist
+			fetchSignal = AbortSignal.any
+				? AbortSignal.any([abortController.signal, providerOptionsCombined.signal as AbortSignal])
+				: abortController.signal;
+		} else if (abortController) {
+			fetchSignal = abortController.signal;
+		} else if (providerOptionsCombined.signal) {
+			fetchSignal = providerOptionsCombined.signal as AbortSignal;
+		}
+
+		try {
+			const response = await fetch(this.clientUrl, {
+				...providerOptionsCombined,
+				signal: fetchSignal,
+				method: 'POST',
+				headers: {
+					...providerOptionsCombined.headers as Record<string, string> | undefined,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(payload),
+			});
+			if (!response.ok) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+				throw new ResponseError(await response.json(), undefined, undefined, response.status);
+			}
+
+			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		} catch (error: unknown) {
+			if (timeoutMs !== undefined && timeoutMs > 0 && abortController?.signal.aborted) {
+				if (
+					(error instanceof DOMException && error.name === 'AbortError') ||
+					(error instanceof Error && error.name === 'AbortError')
+				) {
+					throw new OperationTimeoutError(`Request timed out after ${timeoutMs}ms`);
+				}
+			}
+			throw error;
+		} finally {
+			if (timeoutId !== undefined) {
+				clearTimeout(timeoutId);
+			}
+		}
 	}
 
 	/* eslint-disable class-methods-use-this */
