@@ -16,5 +16,8 @@ along with web3.js.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 export interface HttpProviderOptions {
+	/** Timeout in milliseconds for HTTP requests. Uses AbortSignal.timeout() internally. */
+	timeout?: number;
+	/** Standard RequestInit options passed directly to fetch(). */
 	providerOptions: RequestInit;
 }

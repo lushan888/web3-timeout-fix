@@ -31,6 +31,25 @@ import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
 
+/**
+ * Create an AbortSignal that combines the configured timeout with
+ * any user-provided signal, picking the shorter deadline when both exist.
+ */
+function createTimeoutSignal(
+	timeoutMs?: number,
+	userSignal?: AbortSignal,
+): AbortSignal | undefined {
+	if (!timeoutMs && !userSignal) return undefined;
+
+	const timeoutSignal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+
+	if (!userSignal) return timeoutSignal;
+	if (!timeoutSignal) return userSignal;
+
+	// Combine: abort when either fires (whichever is sooner)
+	return AbortSignal.any([timeoutSignal, userSignal]);
+}
+
 export default class HttpProvider<
 	API extends Web3APISpec = EthExecutionAPI,
 > extends Web3BaseProvider<API> {
@@ -69,6 +88,15 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
+
+		// Extract timeout from constructor options and build a timeout signal
+		const timeoutMs = this.httpProviderOptions?.timeout;
+		const userSignal = providerOptionsCombined.signal;
+		const effectiveSignal = createTimeoutSignal(timeoutMs, userSignal);
+		if (effectiveSignal) {
+			providerOptionsCombined.signal = effectiveSignal;
+		}
+
 		const response = await fetch(this.clientUrl, {
 			...providerOptionsCombined,
 			method: 'POST',
