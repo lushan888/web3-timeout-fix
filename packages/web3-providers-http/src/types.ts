@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -16,5 +16,7 @@ along with web3.js.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 export interface HttpProviderOptions {
-	providerOptions: RequestInit;
+	providerOptions?: RequestInit;
+	/** Timeout in milliseconds before the request is aborted. 0 means no timeout. */
+	timeout?: number;
 }

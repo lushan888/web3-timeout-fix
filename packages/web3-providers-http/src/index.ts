@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -30,6 +30,12 @@ import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'we
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
+
+export class RequestTimeoutError extends ResponseError {
+	public constructor(timeoutMs: number) {
+		super(`Request timed out after ${timeoutMs}ms`);
+	}
+}
 
 export default class HttpProvider<
 	API extends Web3APISpec = EthExecutionAPI,
@@ -69,7 +75,7 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
+		const fetchInit: RequestInit = {
 			...providerOptionsCombined,
 			method: 'POST',
 			headers: {
@@ -77,7 +83,39 @@ export default class HttpProvider<
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(payload),
-		});
+		};
+
+		// Apply timeout via AbortController if configured
+		const timeoutMs = this.httpProviderOptions?.timeout;
+		if (timeoutMs && timeoutMs > 0) {
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => {
+				controller.abort();
+			}, timeoutMs);
+			fetchInit.signal = controller.signal;
+			try {
+				const response = await fetch(this.clientUrl, fetchInit);
+				clearTimeout(timeoutId);
+				if (!response.ok) {
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+					throw new ResponseError(
+						await response.json(),
+						undefined,
+						undefined,
+						response.status,
+					);
+				}
+				return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+			} catch (err: any) {
+				clearTimeout(timeoutId);
+				if (err?.name === 'AbortError') {
+					throw new RequestTimeoutError(timeoutMs);
+				}
+				throw err;
+			}
+		}
+
+		const response = await fetch(this.clientUrl, fetchInit);
 		if (!response.ok) {
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 			throw new ResponseError(await response.json(), undefined, undefined, response.status);
