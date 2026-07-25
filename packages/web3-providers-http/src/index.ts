@@ -1,4 +1,4 @@
-﻿/*
+/*
 This file is part of web3.js.
 
 web3.js is free software: you can redistribute it and/or modify
@@ -26,7 +26,7 @@ import {
 	Web3BaseProvider,
 	Web3ProviderStatus,
 } from 'web3-types';
-import { InvalidClientError, MethodNotImplementedError, ResponseError } from 'web3-errors';
+import { InvalidClientError, MethodNotImplementedError, ResponseError, ConnectionTimeoutError } from 'web3-errors';
 import { HttpProviderOptions } from './types.js';
 
 export { HttpProviderOptions } from './types.js';
@@ -69,21 +69,45 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
-		const response = await fetch(this.clientUrl, {
-			...providerOptionsCombined,
-			method: 'POST',
-			headers: {
-				...providerOptionsCombined.headers,
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify(payload),
-		});
-		if (!response.ok) {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-			throw new ResponseError(await response.json(), undefined, undefined, response.status);
+
+		const timeout = this.httpProviderOptions?.timeout;
+		let abortController: AbortController | undefined;
+		let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+		if (timeout !== undefined && timeout > 0) {
+			abortController = new AbortController();
+			timeoutId = setTimeout(() => {
+				abortController?.abort();
+			}, timeout);
 		}
 
-		return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		try {
+			const response = await fetch(this.clientUrl, {
+				...providerOptionsCombined,
+				method: 'POST',
+				headers: {
+					...providerOptionsCombined.headers,
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(payload),
+				signal: abortController?.signal,
+			});
+			if (!response.ok) {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+				throw new ResponseError(await response.json(), undefined, undefined, response.status);
+			}
+
+			return (await response.json()) as JsonRpcResponseWithResult<ResultType>;
+		} catch (error: unknown) {
+			if (error instanceof Error && error.name === 'AbortError') {
+				throw new ConnectionTimeoutError(timeout ?? 0);
+			}
+			throw error;
+		} finally {
+			if (timeoutId !== undefined) {
+				clearTimeout(timeoutId);
+			}
+		}
 	}
 
 	/* eslint-disable class-methods-use-this */
