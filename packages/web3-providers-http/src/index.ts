@@ -69,15 +69,34 @@ export default class HttpProvider<
 			...this.httpProviderOptions?.providerOptions,
 			...requestOptions,
 		};
+
+		// Handle timeout via AbortSignal if configured
+		const timeout = this.httpProviderOptions?.timeout;
+		let signal = providerOptionsCombined.signal;
+		let timeoutId;
+		if (timeout !== undefined && timeout > 0) {
+			const controller = new AbortController();
+			timeoutId = setTimeout(() => controller.abort(), timeout);
+			if (signal) {
+				const existingSignal = signal;
+				existingSignal.addEventListener('abort', () => {
+					clearTimeout(timeoutId);
+					controller.abort();
+				});
+			}
+			signal = controller.signal;
+		}
+
 		const response = await fetch(this.clientUrl, {
 			...providerOptionsCombined,
+			signal,
 			method: 'POST',
 			headers: {
 				...providerOptionsCombined.headers,
 				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify(payload),
-		});
+		}).finally(() => { if (timeoutId) clearTimeout(timeoutId); });
 		if (!response.ok) {
 			// eslint-disable-next-line @typescript-eslint/no-unsafe-argument
 			throw new ResponseError(await response.json(), undefined, undefined, response.status);
